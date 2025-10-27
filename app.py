@@ -67,7 +67,8 @@ def create_sidebar_filters(df):
         df (pd.DataFrame): The loaded storm events dataframe.
 
     Returns:
-        tuple: (selected_month_range, num_points_to_display)
+        tuple: (selected_month_range, num_points_to_display, location_filter,
+                latitude_min, latitude_max, show_advanced_stats, view_mode)
     """
     st.sidebar.header('🔍 Data Filters')
     st.sidebar.markdown('---')
@@ -94,7 +95,60 @@ def create_sidebar_filters(df):
         help='Limit the number of points on the map to improve performance'
     )
 
-    return selected_month_range, num_points_to_display
+    st.sidebar.markdown('---')
+
+    # Widget 3: Text Input - Location Filter
+    st.sidebar.subheader('📍 Location Filter')
+    location_filter = st.sidebar.text_input(
+        'Search by location name:',
+        value='',
+        placeholder='Enter location keyword...',
+        help='Filter events by location name (case-insensitive)'
+    )
+
+    # Widget 4: Number Input - Latitude Range
+    st.sidebar.subheader('🌐 Latitude Range')
+    col1, col2 = st.sidebar.columns(2)
+    with col1:
+        latitude_min = st.number_input(
+            'Min Latitude',
+            min_value=-90.0,
+            max_value=90.0,
+            value=24.0,
+            step=1.0,
+            help='Minimum latitude to include'
+        )
+    with col2:
+        latitude_max = st.number_input(
+            'Max Latitude',
+            min_value=-90.0,
+            max_value=90.0,
+            value=50.0,
+            step=1.0,
+            help='Maximum latitude to include'
+        )
+
+    st.sidebar.markdown('---')
+
+    # Widget 5: Radio Button - View Mode
+    st.sidebar.subheader('📊 View Mode')
+    view_mode = st.sidebar.radio(
+        'Select analysis focus:',
+        ['Comprehensive', 'Temporal Only', 'Spatial Only'],
+        index=0,
+        help='Choose which analyses to display'
+    )
+
+    # Widget 6: Checkbox - Show Advanced Statistics
+    st.sidebar.subheader('⚙️ Display Options')
+    show_advanced_stats = st.sidebar.checkbox(
+        'Show advanced statistics',
+        value=True,
+        help='Display detailed statistical information'
+    )
+
+    return (selected_month_range, num_points_to_display, location_filter,
+            latitude_min, latitude_max, show_advanced_stats, view_mode)
 
 
 def filter_data_by_month(df, month_range):
@@ -114,7 +168,48 @@ def filter_data_by_month(df, month_range):
     ]
 
 
-def display_key_metrics(df, filtered_df, month_range):
+def apply_all_filters(df, month_range, location_filter, 
+                      latitude_min, latitude_max):
+    """
+    Apply all filters to the dataframe.
+
+    Args:
+        df (pd.DataFrame): The storm events dataframe.
+        month_range (tuple): Tuple of (min_month, max_month).
+        location_filter (str): Location keyword to filter by.
+        latitude_min (float): Minimum latitude.
+        latitude_max (float): Maximum latitude.
+
+    Returns:
+        pd.DataFrame: Filtered dataframe.
+    """
+    # Filter by month
+    filtered = df[
+        (df['MONTH'] >= month_range[0]) &
+        (df['MONTH'] <= month_range[1])
+    ]
+    
+    # Filter by location if provided
+    if location_filter and location_filter.strip():
+        filtered = filtered[
+            filtered['LOCATION'].str.contains(
+                location_filter, 
+                case=False, 
+                na=False
+            )
+        ]
+    
+    # Filter by latitude range
+    filtered = filtered[
+        (filtered['LATITUDE'] >= latitude_min) &
+        (filtered['LATITUDE'] <= latitude_max)
+    ]
+    
+    return filtered
+
+
+def display_key_metrics(df, filtered_df, month_range, location_filter,
+                        latitude_min, latitude_max):
     """
     Display key metrics in columns.
 
@@ -122,6 +217,9 @@ def display_key_metrics(df, filtered_df, month_range):
         df (pd.DataFrame): Original dataframe.
         filtered_df (pd.DataFrame): Filtered dataframe.
         month_range (tuple): Selected month range.
+        location_filter (str): Location filter keyword.
+        latitude_min (float): Minimum latitude filter.
+        latitude_max (float): Maximum latitude filter.
     """
     col1, col2, col3, col4 = st.columns(4)
 
@@ -129,7 +227,12 @@ def display_key_metrics(df, filtered_df, month_range):
         st.metric("📊 Total Events", f"{len(df):,}")
 
     with col2:
-        st.metric("✅ Filtered Events", f"{len(filtered_df):,}")
+        filter_ratio = len(filtered_df) / len(df) * 100 if len(df) > 0 else 0
+        st.metric(
+            "✅ Filtered Events", 
+            f"{len(filtered_df):,}",
+            delta=f"{filter_ratio:.1f}% of total"
+        )
 
     with col3:
         st.metric(
@@ -141,14 +244,25 @@ def display_key_metrics(df, filtered_df, month_range):
         if len(filtered_df) > 0:
             avg_lat = filtered_df['LATITUDE'].mean()
             st.metric("🌐 Avg Latitude", f"{avg_lat:.2f}°")
+    
+    # Display active filters
+    active_filters = []
+    if location_filter and location_filter.strip():
+        active_filters.append(f"📍 Location: '{location_filter}'")
+    if latitude_min != 24.0 or latitude_max != 50.0:
+        active_filters.append(f"🌐 Lat: [{latitude_min:.1f}°, {latitude_max:.1f}°]")
+    
+    if active_filters:
+        st.info("🔍 **Active Filters**: " + " | ".join(active_filters))
 
 
-def analyze_seasonal_patterns(filtered_df):
+def analyze_seasonal_patterns(filtered_df, show_advanced_stats):
     """
     Analyze and visualize seasonal patterns of storm events.
 
     Args:
         filtered_df (pd.DataFrame): Filtered storm events dataframe.
+        show_advanced_stats (bool): Whether to show advanced statistics.
     """
     st.header(
         '📈 Question 1: Does Storm Event Frequency Show Seasonal Patterns?'
@@ -223,6 +337,27 @@ def analyze_seasonal_patterns(filtered_df):
         - 📈 Fluctuation: \
 {int(peak_month['Event Count'] - low_month['Event Count'])} events difference
         """)
+        
+        # Show advanced statistics if enabled
+        if show_advanced_stats:
+            st.subheader('📊 Advanced Temporal Statistics')
+            col1, col2, col3, col4 = st.columns(4)
+            
+            with col1:
+                mean_events = events_by_month['Event Count'].mean()
+                st.metric("Mean Events/Month", f"{mean_events:.1f}")
+            
+            with col2:
+                std_events = events_by_month['Event Count'].std()
+                st.metric("Standard Deviation", f"{std_events:.1f}")
+            
+            with col3:
+                total_events = events_by_month['Event Count'].sum()
+                st.metric("Total Events", f"{total_events:,}")
+            
+            with col4:
+                cv = (std_events / mean_events * 100) if mean_events > 0 else 0
+                st.metric("Coefficient of Variation", f"{cv:.1f}%")
 
 
 def analyze_geographic_clustering(filtered_df, num_points_to_display):
@@ -454,10 +589,15 @@ def main():
         df = load_data()
 
     # Create sidebar filters
-    selected_month_range, num_points_to_display = create_sidebar_filters(df)
+    (selected_month_range, num_points_to_display, location_filter,
+     latitude_min, latitude_max, show_advanced_stats, view_mode) = \
+        create_sidebar_filters(df)
 
-    # Filter data based on selections
-    filtered_df = filter_data_by_month(df, selected_month_range)
+    # Filter data based on all selections
+    filtered_df = apply_all_filters(
+        df, selected_month_range, location_filter, 
+        latitude_min, latitude_max
+    )
 
     # Main page layout
     st.title('🌪️ 2020 US Storm Events Spatio-Temporal Browser')
@@ -468,29 +608,30 @@ def main():
     st.markdown('---')
 
     # Display key metrics
-    display_key_metrics(df, filtered_df, selected_month_range)
+    display_key_metrics(df, filtered_df, selected_month_range,
+                       location_filter, latitude_min, latitude_max)
 
     st.markdown('---')
 
-    # Question 1: Seasonal patterns analysis
-    analyze_seasonal_patterns(filtered_df)
+    # Question 1: Seasonal patterns analysis (based on view mode)
+    if view_mode in ['Comprehensive', 'Temporal Only']:
+        analyze_seasonal_patterns(filtered_df, show_advanced_stats)
+        st.markdown('---')
 
-    st.markdown('---')
+    # Question 2: Geographic clustering analysis (based on view mode)
+    if view_mode in ['Comprehensive', 'Spatial Only']:
+        analyze_geographic_clustering(filtered_df, num_points_to_display)
+        st.markdown('---')
 
-    # Question 2: Geographic clustering analysis
-    analyze_geographic_clustering(filtered_df, num_points_to_display)
+    # Exploratory analysis: Geographic distribution (based on view mode)
+    if view_mode in ['Comprehensive', 'Spatial Only']:
+        display_geographic_distribution(filtered_df)
+        st.markdown('---')
 
-    st.markdown('---')
-
-    # Exploratory analysis: Geographic distribution
-    display_geographic_distribution(filtered_df)
-
-    st.markdown('---')
-
-    # Supplementary analysis: Scatter plot
-    display_scatter_plot(filtered_df)
-
-    st.markdown('---')
+    # Supplementary analysis: Scatter plot (based on view mode)
+    if view_mode in ['Comprehensive', 'Spatial Only']:
+        display_scatter_plot(filtered_df)
+        st.markdown('---')
 
     # Data preview and download
     display_data_preview(filtered_df, selected_month_range)
